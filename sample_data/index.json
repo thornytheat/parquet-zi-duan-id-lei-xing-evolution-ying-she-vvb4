@@ -1,0 +1,34 @@
+{
+  "samples": [
+    {
+      "key": "A",
+      "label": "A · 完全兼容（无字段变更）",
+      "table": "dwd_orders",
+      "old": "a/old.json",
+      "new": "a/new.json",
+      "consumers": "a/consumers.json",
+      "description": "订单明细表两版 schema 的 field_id、列名、类型完全一致，用于验证 full 兼容且迁移步骤为 0。",
+      "expected": "full / 0 条迁移 SQL"
+    },
+    {
+      "key": "B",
+      "label": "B · 需回填（改名 + 新增带默认值 + decimal 精度提升）",
+      "table": "dwd_payment",
+      "old": "b/old.json",
+      "new": "b/new.json",
+      "consumers": "b/consumers.json",
+      "description": "支付流水表：channel 改名为 pay_channel（同 field_id）、新增 fee（带默认值）与 settle_status（可空）、amount 精度由 decimal(10,2) 提升到 (18,2)。",
+      "expected": "backward / rename 1 + added 2 + 回填 1 + ALTER 序列"
+    },
+    {
+      "key": "C",
+      "label": "C · 破坏性（删列 + int64→int32 + 分区字段改类型）",
+      "table": "dwd_shipment",
+      "old": "c/old.json",
+      "new": "c/new.json",
+      "consumers": "c/consumers.json",
+      "description": "发货表：删除 status、weight_gram 从 int64 收窄到 int32、分区字段 dt 从 date 改成 timestamp，carrier 的 field_id 从 6 变为 9。",
+      "expected": "none / 3 条阻断 + broken_consumers"
+    }
+  ]
+}

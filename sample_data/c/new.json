@@ -1,0 +1,10 @@
+{
+  "table": "dwd_shipment",
+  "fields": [
+    {"id": 1, "name": "shipment_id", "type": "string", "nullable": false, "default": null, "partition": false},
+    {"id": 2, "name": "order_id", "type": "int64", "nullable": false, "default": null, "partition": false},
+    {"id": 4, "name": "weight_gram", "type": "int32", "nullable": false, "default": null, "partition": false},
+    {"id": 5, "name": "dt", "type": "timestamp", "nullable": false, "default": null, "partition": true},
+    {"id": 9, "name": "carrier", "type": "string", "nullable": true, "default": null, "partition": false}
+  ]
+}

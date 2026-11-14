@@ -1,0 +1,22 @@
+name: schemaevo
+
+services:
+  app:
+    build: .
+    container_name: schemaevo-app
+    ports:
+      - "${APP_PORT:-18216}:8000"
+    environment:
+      - APP_PORT=18216
+      - DATA_DIR=/app/data
+      - SAMPLE_DIR=/app/sample_data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - schemaevo-data:/app/data
+
+volumes:
+  schemaevo-data:

@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+{% block title %}对比结果 {{ run.run_id }} · {{ app_name }}{% endblock %}
+{% block crumb %}对比结果{% endblock %}
+{% block meta %}{% set s = run.summary %}<span class="dot {{ 'err' if s.level == 'none' else ('warn' if s.level != 'full' else 'ok') }}"></span>兼容级别 {{ s.level }} · {{ '可执行' if s.can_execute else '有阻断不可执行' }}{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/workbench">回工作台</a>
+<a class="btn small" href="/api/runs/{{ run.run_id }}/migration.sql">下载迁移脚本</a>
+{% endblock %}
+{% block status_left %}run_id {{ run.run_id }} · 生成于 {{ run.created_at }} · 输入来源 {{ run.source }} · 矩阵 {{ run.matrix_version }}{% endblock %}
+{% block status_right %}表 <code>{{ run.table }}</code> · {{ run.match.rows|length }} 条字段匹配 · {{ run.migration.sql_steps|length }} 条 ALTER{% endblock %}
+
+{% block content %}
+{% set s = run.summary %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">对比结果 · <span class="mono">{{ run.run_id }}</span></h1>
+    <p class="page-sub">
+      表 <code>{{ run.table }}</code> · 生成于 {{ run.created_at }} · 输入来源 {{ run.source }} · 矩阵 {{ run.matrix_version }} ·
+      兼容级别
+      {% if s.level == 'full' %}<span class="tag ok">full</span>
+      {% elif s.level == 'backward' %}<span class="tag warn">backward</span>
+      {% elif s.level == 'forward' %}<span class="tag warn">forward</span>
+      {% else %}<span class="tag err">none</span>{% endif %}
+      {{ s.level_label }} ·
+      能否执行迁移
+      {% if s.can_execute %}<span class="tag ok">是</span>{% else %}<span class="tag err">否（{{ s.migration_blocking }} 项迁移阻断）</span>{% endif %}
+    </p>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn secondary small" href="/review">复核与导出</a>
+    <a class="btn secondary small" href="/workbench?sample={{ 'C' if s.level == 'none' else 'B' }}">换一组再比</a>
+  </div>
+</div>
+
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="k-label">匹配字段</div>
+    <div class="k-value">{{ run.match.rows|length }}</div>
+    <div class="k-note">旧 {{ run.match.counts.old_fields }} → 新 {{ run.match.counts.new_fields }}</div>
+  </div>
+  <div class="kpi warn">
+    <div class="k-label">改名</div>
+    <div class="k-value">{{ s.renamed }}</div>
+    <div class="k-note">ID 变更 {{ s.id_changed }} 条需人工确认</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">新增</div>
+    <div class="k-value">{{ s.added }}</div>
+    <div class="k-note">含默认值 / 可空列</div>
+  </div>
+  <div class="kpi err">
+    <div class="k-label">删除</div>
+    <div class="k-value">{{ s.removed }}</div>
+    <div class="k-note">删列放 ALTER 最后</div>
+  </div>
+  <div class="kpi {% if s.blocking_count %}err{% else %}ok{% endif %}">
+    <div class="k-label">阻断</div>
+    <div class="k-value">{{ s.blocking_count }}</div>
+    <div class="k-note">迁移 {{ s.migration_blocking }} · 方向 {{ s.compat_blocking }} · 破损引用 {{ s.broken_consumers }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div class="segmented">
+      <button type="button" data-tab-target="tab-match" class="active">字段匹配</button>
+      <button type="button" data-tab-target="tab-type">类型变更</button>
+      <button type="button" data-tab-target="tab-sql">迁移 SQL</button>
+      <button type="button" data-tab-target="tab-block">阻断与消费方</button>
+    </div>
+    <div class="panel-actions">
+      <span class="tag">{{ run.type_changes|length }} 条类型变更</span>
+      <span class="tag {{ 'err' if s.level == 'none' else ('warn' if s.level != 'full' else 'ok') }}">{{ s.level }}</span>
+      <a class="btn secondary small" href="/api/runs/{{ run.run_id }}/migration.sql">下载脚本</a>
+    </div>
+  </div>
+
+  <div class="panel-body flush">
+    <div id="tab-match" class="tab-panel">
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead>
+            <tr><th style="width:44px">#</th><th style="width:100px">结论</th><th style="width:70px">field_id</th>
+              <th>旧列名 → 新列名</th><th>旧类型 → 新类型</th><th style="width:64px">分区</th><th style="width:170px">依据</th></tr>
+          </thead>
+          <tbody>
+          {% for r in run.match.rows %}
+            <tr>
+              <td>{{ r.index }}</td>
+              <td>
+                {% if r.kind == 'unchanged' %}<span class="tag ok">{{ r.kind_label }}</span>
+                {% elif r.kind in ('renamed', 'id_changed') %}<span class="tag warn">{{ r.kind_label }}</span>
+                {% elif r.kind == 'removed' %}<span class="tag err">{{ r.kind_label }}</span>
+                {% elif r.kind == 'added' %}<span class="tag info">{{ r.kind_label }}</span>
+                {% else %}<span class="tag warn">{{ r.kind_label }}</span>{% endif %}
+              </td>
+              <td><code>{{ r.field_id if r.field_id is not none else '—' }}</code></td>
+              <td><code>{{ r.old_name or '—' }}</code> → <code>{{ r.new_name or '（已删除）' }}</code></td>
+              <td class="small">{{ r.old_type or '—' }} → {{ r.new_type or '—' }}
+                {% if r.type_verdict == 'compatible' %}<span class="tag ok">兼容</span>
+                {% elif r.type_verdict == 'blocked' %}<span class="tag err">阻断</span>
+                {% elif r.type_verdict == 'unknown' %}<span class="tag warn">未知</span>{% endif %}
+              </td>
+              <td>{{ '是' if r.partition else '否' }}</td>
+              <td class="small">{{ r.basis_label }}{% if r.note %}<div class="hint">{{ r.note }}</div>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          field_id 相同优先认定为同一列；无 id 时按名称精确匹配。改名（id 未变）与 ID 变更（name 未变、需人工确认）分别标注在「依据」列。
+        </p>
+      </div>
+    </div>
+
+    <div id="tab-type" class="tab-panel" hidden>
+      <div class="panel-head" style="border-top:0">
+        <h3>类型变更逐条结论（{{ run.type_changes|length }} 条）</h3>
+        <div class="panel-actions"><span class="tag">模块 3/6 · 类型矩阵</span></div>
+      </div>
+      {% if run.type_changes %}
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th style="width:180px">字段</th><th style="width:240px">旧类型 → 新类型</th><th style="width:90px">结论</th><th style="width:150px">矩阵来源</th><th>原因</th></tr></thead>
+          <tbody>
+          {% for t in run.type_changes %}
+            <tr>
+              <td><code>{{ t.field }}</code></td>
+              <td>{{ t.old_type }} → {{ t.new_type }}</td>
+              <td>
+                {% if t.verdict == 'compatible' %}<span class="tag ok">兼容</span>
+                {% elif t.verdict == 'blocked' %}<span class="tag err">阻断</span>
+                {% else %}<span class="tag warn">未知</span>{% endif %}
+              </td>
+              <td class="small">{{ '显式提升矩阵' if t.rule == 'explicit' else '未知对（不在矩阵内，不猜测）' }}</td>
+              <td class="small">{{ t.reason }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty"><strong>本次没有任何字段类型变化</strong>匹配表里的类型列即为最终结论。</div>
+      {% endif %}
+
+      {% if run.matrix_usage %}
+      <div class="panel-head" style="border-top:1px solid var(--line)">
+        <h3>本次用到的矩阵条目（{{ run.matrix_usage|length }} 条）</h3>
+        <div class="panel-actions">
+          <a class="btn secondary small" href="/api/matrix">矩阵 JSON</a>
+          <a class="btn secondary small" href="/review#matrix">完整矩阵</a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>旧类型</th><th>新类型</th><th style="width:90px">结论</th><th>规则 / 原因</th></tr></thead>
+          <tbody>
+            {% for m in run.matrix_usage %}
+            <tr>
+              <td>{{ m.from }}</td>
+              <td>{{ m.to }}</td>
+              <td><span class="tag {{ 'ok' if m.verdict == 'compatible' else ('err' if m.verdict == 'blocked' else 'warn') }}">{{ m.verdict_label }}</span></td>
+              <td class="small">{{ m.reason }} <span class="hint">（{{ '显式提升矩阵' if m.rule == 'explicit' else '不在矩阵内' }}）</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+
+    <div id="tab-sql" class="tab-panel" hidden>
+      <div class="panel-head" style="border-top:0">
+        <h3>迁移计划（{{ run.migration.sql_steps|length }} 条 ALTER，{{ run.migration.steps|length }} 个步骤）</h3>
+        <div class="panel-actions">
+          <span class="tag">模块 5/6 · 迁移计划</span>
+          <span class="tag {{ 'ok' if run.migration.can_execute else 'err' }}">{{ '可执行' if run.migration.can_execute else '不可执行' }}</span>
+        </div>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th style="width:52px">序号</th><th style="width:110px">动作</th><th style="width:180px">对象</th><th>说明</th><th style="width:70px">可执行</th></tr></thead>
+          <tbody>
+          {% for step in run.migration.steps %}
+            <tr>
+              <td>{{ step.seq }}</td>
+              <td><span class="tag {{ 'err' if step.action == 'drop_column' else ('warn' if step.action == 'backfill' else 'info') }}">{{ step.action_label }}</span></td>
+              <td><code>{{ step.object }}</code></td>
+              <td class="small">{{ step.note }}{% if step.requires_rewrite %}<div class="hint">需要重写数据</div>{% endif %}</td>
+              <td>{{ '是' if step.executable else '否' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel-body tight">
+        <p class="small" style="margin:0 0 6px">
+          迁移 SQL 可整体下载：<a href="/api/runs/{{ run.run_id }}/migration.sql">/api/runs/{{ run.run_id }}/migration.sql</a>
+          · 顺序固定：改名 → 加列（含默认值）→ 回填 → 类型变更 → 删列最后；阻断项不产出 ALTER。
+        </p>
+        <pre class="sql" id="sql-block">{{ run.migration.sql_text }}</pre>
+      </div>
+
+      <div class="panel-head" style="border-top:1px solid var(--line)">
+        <h3>需回填对象（{{ run.migration.backfill|length }}）</h3>
+      </div>
+      {% if run.migration.backfill %}
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th style="width:160px">列</th><th style="width:150px">类型</th><th>原因</th><th>建议 SQL</th></tr></thead>
+          <tbody>
+            {% for b in run.migration.backfill %}
+            <tr><td><code>{{ b.field }}</code></td><td>{{ b.kind_label or b.kind }}</td><td class="small">{{ b.reason }}</td><td><code>{{ b.suggested_sql }}</code></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty" style="padding:14px">没有需要回填的列。</div>
+      {% endif %}
+
+      <div class="panel-body tight">
+        <h3 style="margin:10px 0 4px">读写方升级顺序</h3>
+        <ol class="list small" style="margin:0">
+          {% for item in run.migration.upgrade_order %}<li>{{ item }}</li>{% endfor %}
+        </ol>
+      </div>
+    </div>
+
+    <div id="tab-block" class="tab-panel" hidden>
+      <div class="panel-head" style="border-top:0">
+        <h3>兼容级别判定（双向）</h3>
+        <div class="panel-actions"><span class="tag">模块 4/6 · 兼容判定</span></div>
+      </div>
+      <div class="panel-body tight">
+        <div class="form-inline">
+          {% for key, item in run.compat.directions.items() %}
+          <div>
+            <div class="small muted">{{ item.label }}</div>
+            <p style="margin:4px 0 0">
+              {% if item.state == 'compatible' %}<span class="tag ok">兼容</span>
+              {% elif item.state == 'blocked' %}<span class="tag err">阻断</span>
+              {% else %}<span class="tag warn">未知（需人工确认）</span>{% endif %}
+            </p>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="hint" style="margin:8px 0 0">
+          方向阻断说明某个读写方向不成立（这里只影响兼容级别的高低）；迁移动作本身能否执行，看「迁移 SQL」分段的迁移阻断。
+        </p>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th style="width:110px">方向</th><th style="width:130px">结论</th><th style="width:140px">字段</th><th>依据</th></tr></thead>
+          <tbody>
+          {% for r in run.compat.reasons %}
+            <tr>
+              <td class="small">{{ '旧写新读' if r.direction == 'backward' else '新写旧读' }}</td>
+              <td>
+                {% if r.verdict == 'compatible' %}<span class="tag ok">兼容</span>
+                {% elif r.verdict == 'blocked' %}<span class="tag err">阻断</span>
+                {% else %}<span class="tag warn">未知</span>{% endif %}
+                <span class="tag">{{ r.severity_label }}</span>
+              </td>
+              <td><code>{{ r.field }}</code></td>
+              <td class="small">{{ r.text }} <span class="hint">（规则代码 {{ r.code }}）</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel-head" style="border-top:1px solid var(--line)">
+        <h3>方向阻断原因（去重，共 {{ run.block_reasons|length }} 条）</h3>
+      </div>
+      {% if run.block_reasons %}
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th style="width:210px">规则代码</th><th style="width:140px">字段</th><th>说明</th></tr></thead>
+          <tbody>
+            {% for b in run.block_reasons %}
+            <tr><td><code>{{ b.code }}</code></td><td><code>{{ b.field }}</code></td><td class="small">{{ b.text }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty" style="padding:14px">没有阻断项。</div>
+      {% endif %}
+
+      {% if run.migration.blocking %}
+      <div class="panel-body tight">
+        <div class="alert alert-error" role="alert" style="margin:0">
+          存在 {{ run.migration.blocking|length }} 项迁移阻断，脚本在阻断消除前不可执行：
+          <ul class="list small" style="margin:4px 0 0">
+            {% for b in run.migration.blocking %}<li>{{ b.code }} · <code>{{ b.field }}</code> · {{ b.text }}</li>{% endfor %}
+          </ul>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="panel-head" style="border-top:1px solid var(--line)">
+        <h3>列引用检查（数据文件 {{ run.consumers_check.files }} 个 · 引用 {{ run.consumers_check.total_refs }} 处）</h3>
+        <div class="panel-actions">
+          <span class="tag ok">正常 {{ run.consumers_check.ok_refs }}</span>
+          <span class="tag err">破损 {{ run.consumers_check.broken_count }}</span>
+          <span class="tag warn">需改名 {{ run.consumers_check.needs_update_count }}</span>
+          <span class="tag">待确认 {{ run.consumers_check.unknown_count }}</span>
+        </div>
+      </div>
+
+      {% if run.consumers_check.broken %}
+      <div class="panel-body tight"><h3 style="margin:0">broken_consumers</h3></div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th style="width:340px">数据文件</th><th style="width:150px">引用列</th><th>原因</th></tr></thead>
+          <tbody>
+          {% for b in run.consumers_check.broken %}
+          <tr><td class="small"><code>{{ b.path }}</code></td><td><code>{{ b.column }}</code></td><td class="small">{{ b.reason }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      {% if run.consumers_check.needs_update %}
+      <div class="panel-body tight"><h3 style="margin:0">需要同步改名的引用</h3></div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th style="width:340px">数据文件</th><th style="width:130px">旧列名</th><th style="width:130px">新列名</th><th>原因</th></tr></thead>
+          <tbody>
+          {% for n in run.consumers_check.needs_update %}
+          <tr><td class="small"><code>{{ n.path }}</code></td><td><code>{{ n.column }}</code></td><td><code>{{ n.new_column }}</code></td><td class="small">{{ n.reason }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      {% if run.consumers_check.unknown %}
+      <div class="panel-body tight"><h3 style="margin:0">待人工确认的引用</h3></div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th style="width:340px">数据文件</th><th style="width:150px">列</th><th>原因</th></tr></thead>
+          <tbody>
+          {% for u in run.consumers_check.unknown %}
+          <tr><td class="small"><code>{{ u.path }}</code></td><td><code>{{ u.column }}</code></td><td class="small">{{ u.reason }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="panel-actions">
+    <a class="btn small" href="/api/runs/{{ run.run_id }}/migration.sql">下载迁移脚本</a>
+    <a class="btn secondary small" href="/workbench">回工作台再跑一次</a>
+    <a class="btn secondary small" href="/review">复核与导出（历史对比）</a>
+    <span class="small muted" style="align-self:center">run_id <code>{{ run.run_id }}</code> · 同一输入重跑会生成新记录</span>
+  </div>
+</div>
+{% endblock %}

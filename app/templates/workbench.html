@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Schema 对比工作台 · {{ app_name }}{% endblock %}
+{% block crumb %}Schema 对比工作台{% endblock %}
+{% block meta %}<span class="dot {% if preview.summary.can_execute %}ok{% else %}err{% endif %}"></span>预演 {{ sample.key }} · {{ preview.summary.level_label }}{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/">回总览</a>
+<a class="btn secondary small" href="/review">复核与导出</a>
+{% endblock %}
+{% block status_left %}字段匹配 → 类型矩阵 → 兼容判定 → 迁移计划 → 列引用检查 · 结果写入 data/runs/*.json{% endblock %}
+{% block status_right %}当前预演 样例 {{ selected }} · 表 <code>{{ sample.old.table }}</code> · 未落库{% endblock %}
+
+{% block content %}
+{% set ps = preview.summary %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Schema 对比工作台</h1>
+    <p class="page-sub">选一组样例或直接粘贴两版 schema JSON，点「执行对比」进入结果页查看逐条依据；右侧是按当前样例实时预演的匹配、类型、兼容与迁移口径（不落库）。schema 保持 JSON 描述，不装 pyarrow。</p>
+  </div>
+</div>
+
+<div class="split">
+  <section class="panel pane-sticky" id="m1">
+    <div class="panel-head">
+      <h2>选择 schema 对</h2>
+      <div class="panel-actions"><span class="tag">模块 1/6 · schema 上传</span></div>
+    </div>
+    <div class="panel-body">
+      <div class="field">
+        <label for="sample-select">内置样例</label>
+        <select id="sample-select">
+          {% for s in samples %}
+          <option value="{{ s.key }}" {{ 'selected' if s.key == selected else '' }}>{{ s.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint" id="sample-hint">{{ sample.description }}（预期：{{ sample.expected }}）</p>
+      </div>
+
+      <div class="field">
+        <label for="old-schema">旧 schema（产出方当前版本）</label>
+        <textarea id="old-schema" spellcheck="false">{{ old_text }}</textarea>
+      </div>
+      <div class="field">
+        <label for="new-schema">新 schema（拟发布版本）</label>
+        <textarea id="new-schema" spellcheck="false">{{ new_text }}</textarea>
+      </div>
+      <div class="field">
+        <label for="consumers">数据文件清单（consumers.json）</label>
+        <textarea id="consumers" spellcheck="false">{{ consumers_text }}</textarea>
+      </div>
+
+      <div id="error-box" class="alert alert-error" role="alert" hidden></div>
+      <div id="ok-box" class="alert alert-info" hidden></div>
+
+      <details class="help">
+        <summary>类型写法 / 匹配口径 / 校验规则</summary>
+        <ul class="list small" style="margin-bottom:0">
+          <li>类型可写 <code>decimal(10,2)</code>；field_id 用整数，允许某一侧没有 id（此时按名称匹配并标注依据）。</li>
+          <li>field_id 相同优先认定为同一列；id 同名称变 → renamed，名称同 id 变 → id_changed（人工确认）。</li>
+          <li>表外类型对一律 unknown，不猜；分区字段被删或改类型直接双向阻断。</li>
+          <li>解析失败返回 4xx 明确文案，页面不丢输入；执行成功自动跳到 <code>/result/{run_id}</code>。</li>
+        </ul>
+      </details>
+    </div>
+    <div class="panel-actions">
+      <button type="button" id="btn-run">执行对比</button>
+      <button type="button" class="secondary" id="btn-load">载入该样例</button>
+      <a class="btn secondary small" href="/review">查看历史</a>
+      <span class="small muted" style="align-self:center">执行成功自动跳转结果页</span>
+    </div>
+  </section>
+
+  <div>
+    <div class="kpi-strip">
+      <div class="kpi">
+        <div class="k-label">字段行数</div>
+        <div class="k-value">{{ preview.match.rows|length }}</div>
+        <div class="k-note">旧 {{ preview.match.counts.old_fields }} → 新 {{ preview.match.counts.new_fields }}</div>
+      </div>
+      <div class="kpi warn">
+        <div class="k-label">改名</div>
+        <div class="k-value">{{ ps.renamed }}</div>
+        <div class="k-note">Parquet 按 id 读取不受影响</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">新增</div>
+        <div class="k-value">{{ ps.added }}</div>
+        <div class="k-note">旧数据按 null / 默认值补齐 · 类型变更 {{ ps.type_changed }} 条</div>
+      </div>
+      <div class="kpi err">
+        <div class="k-label">删除</div>
+        <div class="k-value">{{ ps.removed }}</div>
+        <div class="k-note">删列直接打断旧读方</div>
+      </div>
+      <div class="kpi {% if ps.blocking_count %}err{% else %}ok{% endif %}">
+        <div class="k-label">阻断</div>
+        <div class="k-value">{{ ps.blocking_count }}</div>
+        <div class="k-note">迁移阻断 {{ ps.migration_blocking }} · 方向阻断 {{ ps.compat_blocking }}</div>
+      </div>
+    </div>
+
+    <section class="panel" id="m2">
+      <div class="panel-head">
+        <h2>字段匹配</h2>
+        <div class="panel-actions">
+          <span class="tag">模块 2/6 · 字段匹配</span>
+          <span class="tag">样例 {{ selected }} 预演</span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead>
+            <tr><th style="width:44px">#</th><th style="width:96px">结论</th><th style="width:64px">field_id</th>
+              <th>旧列名 → 新列名</th><th>旧类型 → 新类型</th><th style="width:120px">依据</th></tr>
+          </thead>
+          <tbody>
+          {% for r in preview.match.rows %}
+            <tr>
+              <td>{{ r.index }}</td>
+              <td>
+                {% if r.kind == 'unchanged' %}<span class="tag ok">{{ r.kind_label }}</span>
+                {% elif r.kind in ('renamed', 'id_changed') %}<span class="tag warn">{{ r.kind_label }}</span>
+                {% elif r.kind == 'removed' %}<span class="tag err">{{ r.kind_label }}</span>
+                {% elif r.kind == 'added' %}<span class="tag info">{{ r.kind_label }}</span>
+                {% else %}<span class="tag warn">{{ r.kind_label }}</span>{% endif %}
+              </td>
+              <td><code>{{ r.field_id if r.field_id is not none else '—' }}</code></td>
+              <td><code>{{ r.old_name or '—' }}</code> → <code>{{ r.new_name or '（已删除）' }}</code>
+                {% if r.partition %}<span class="tag">分区</span>{% endif %}</td>
+              <td class="small">{{ r.old_type or '—' }} → {{ r.new_type or '—' }}
+                {% if r.type_verdict == 'compatible' %}<span class="tag ok">兼容</span>
+                {% elif r.type_verdict == 'blocked' %}<span class="tag err">阻断</span>
+                {% elif r.type_verdict == 'unknown' %}<span class="tag warn">未知</span>{% endif %}
+              </td>
+              <td class="small">{{ r.basis_label }}{% if r.note %}<div class="hint">{{ r.note }}</div>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          预演基于当前载入的样例 {{ selected }}（<code>{{ sample.old.table }}</code>）；粘贴自定义 JSON 后点「执行对比」，实际逐条结论以结果页为准。
+        </p>
+      </div>
+    </section>
+
+    <section class="panel" id="m4">
+      <div class="panel-head">
+        <h2>兼容判定与阻断</h2>
+        <div class="panel-actions">
+          <span class="tag">模块 4/6 · 兼容判定</span>
+          <span class="tag {% if ps.level == 'full' %}ok{% elif ps.level == 'none' %}err{% else %}warn{% endif %}">{{ ps.level_label }}</span>
+        </div>
+      </div>
+      <div class="panel-body tight">
+        <div class="form-inline">
+          {% for key, item in preview.compat.directions.items() %}
+          <div>
+            <div class="small muted">{{ item.label }}</div>
+            <p style="margin:4px 0 0">
+              {% if item.state == 'compatible' %}<span class="tag ok">兼容</span>
+              {% elif item.state == 'blocked' %}<span class="tag err">阻断</span>
+              {% else %}<span class="tag warn">未知（需人工确认）</span>{% endif %}
+            </p>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="hint" style="margin:8px 0 0">
+          方向阻断说明某个读写方向不成立（只影响兼容级别高低）；迁移动作本身能否执行，另看下表的迁移阻断。
+        </p>
+      </div>
+      <div class="table-wrap" style="max-height:300px">
+        <table class="dense">
+          <thead><tr><th style="width:110px">方向</th><th style="width:120px">结论</th><th style="width:130px">字段</th><th>依据</th></tr></thead>
+          <tbody>
+          {% for r in preview.compat.reasons %}
+            <tr>
+              <td class="small">{{ '旧写新读' if r.direction == 'backward' else '新写旧读' }}</td>
+              <td>
+                {% if r.verdict == 'compatible' %}<span class="tag ok">兼容</span>
+                {% elif r.verdict == 'blocked' %}<span class="tag err">阻断</span>
+                {% else %}<span class="tag warn">未知</span>{% endif %}
+                <span class="tag">{{ r.severity_label }}</span>
+              </td>
+              <td><code>{{ r.field }}</code></td>
+              <td class="small">{{ r.text }} <span class="hint">（{{ r.code }}）</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-head" style="border-top:1px solid var(--line)">
+        <h3>阻断原因（去重 {{ preview.block_reasons|length }} 条）</h3>
+        <div class="panel-actions">
+          <span class="tag {% if ps.can_execute %}ok{% else %}err{% endif %}">能否执行 {{ '是' if ps.can_execute else '否（有阻断）' }}</span>
+        </div>
+      </div>
+      {% if preview.block_reasons %}
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th style="width:200px">规则代码</th><th style="width:140px">字段</th><th>说明</th></tr></thead>
+          <tbody>
+            {% for b in preview.block_reasons %}
+            <tr>
+              <td><code>{{ b.code }}</code></td>
+              <td><code>{{ b.field }}</code></td>
+              <td class="small">{{ b.text }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty" style="padding:14px">本次样例没有阻断项。</div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="m3">
+      <div class="panel-head">
+        <h2>类型矩阵</h2>
+        <div class="panel-actions">
+          <span class="tag">模块 3/6 · 类型矩阵</span>
+          <a class="btn secondary small" href="/api/matrix">矩阵 JSON</a>
+        </div>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0 0 6px">
+          判定口径：<code>promotion(旧类型, 新类型)</code> 回答「旧数据里的值能否被新类型无损读取」；反方向（新写旧读）用同样的表反向查一次。
+          表外类型对一律 unknown（不猜）。完整矩阵见复核页。
+        </p>
+      </div>
+      {% if preview.matrix_usage %}
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>旧类型</th><th>新类型</th><th style="width:90px">结论</th><th>矩阵来源 / 原因</th></tr></thead>
+          <tbody>
+            {% for m in preview.matrix_usage %}
+            <tr>
+              <td>{{ m.from }}</td>
+              <td>{{ m.to }}</td>
+              <td><span class="tag {{ 'ok' if m.verdict == 'compatible' else ('err' if m.verdict == 'blocked' else 'warn') }}">{{ m.verdict_label }}</span></td>
+              <td class="small">{{ m.reason }} <span class="hint">（{{ '显式提升矩阵' if m.rule == 'explicit' else '不在矩阵内' }}）</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty" style="padding:14px">本次样例没有类型变更，未用到矩阵条目。</div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="m5">
+      <div class="panel-head">
+        <h2>迁移计划</h2>
+        <div class="panel-actions">
+          <span class="tag">模块 5/6 · 迁移计划</span>
+          <span class="tag">{{ preview.migration.sql_steps|length }} 条 ALTER</span>
+        </div>
+      </div>
+      {% if preview.migration.blocking %}
+      <div class="panel-body tight">
+        <div class="alert alert-error" role="alert" style="margin:0">
+          存在 {{ preview.migration.blocking|length }} 项迁移阻断，脚本在阻断消除前不可执行：
+          <ul class="list small" style="margin:4px 0 0">
+            {% for b in preview.migration.blocking %}<li>{{ b.code }} · <code>{{ b.field }}</code> · {{ b.text }}</li>{% endfor %}
+          </ul>
+        </div>
+      </div>
+      {% endif %}
+      <div class="table-wrap" style="max-height:330px">
+        <table class="dense">
+          <thead><tr><th style="width:52px">序号</th><th style="width:110px">动作</th><th style="width:170px">对象</th><th>说明</th><th style="width:70px">可执行</th></tr></thead>
+          <tbody>
+          {% for step in preview.migration.steps %}
+            <tr>
+              <td>{{ step.seq }}</td>
+              <td><span class="tag {{ 'err' if step.action == 'drop_column' else ('warn' if step.action == 'backfill' else 'info') }}">{{ step.action_label }}</span></td>
+              <td><code>{{ step.object }}</code></td>
+              <td class="small">{{ step.note }}{% if step.requires_rewrite %}<div class="hint">需要重写数据</div>{% endif %}</td>
+              <td>{{ '是' if step.executable else '否' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small" style="margin:0 0 6px">
+          回填对象 <strong>{{ preview.migration.backfill|length }}</strong> 个 · 读写方升级顺序：
+        </p>
+        <ol class="list small" style="margin:0">
+          {% for item in preview.migration.upgrade_order %}<li>{{ item }}</li>{% endfor %}
+        </ol>
+        <details class="help" style="margin-top:8px">
+          <summary>预演迁移 SQL（样例 {{ selected }}，执行后可在结果页下载）</summary>
+          <pre class="sql" id="preview-sql">{{ preview.migration.sql_text }}</pre>
+        </details>
+      </div>
+    </section>
+
+    <section class="panel" id="m6">
+      <div class="panel-head">
+        <h2>报表与导出</h2>
+        <div class="panel-actions"><span class="tag">模块 6/6 · 报表</span></div>
+      </div>
+      <div class="panel-body tight">
+        <div class="kpi-strip" style="margin-bottom:8px">
+          <div class="kpi">
+            <div class="k-label">本次预演级别</div>
+            <div class="k-value" style="font-size:15px">{{ ps.level }}</div>
+            <div class="k-note">{{ ps.level_label }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">ALTER 步骤</div>
+            <div class="k-value">{{ preview.migration.sql_steps|length }}</div>
+            <div class="k-note">回填 {{ preview.migration.backfill|length }} 个对象</div>
+          </div>
+          <div class="kpi {% if preview.consumers_check.broken_count %}err{% endif %}">
+            <div class="k-label">broken_consumers</div>
+            <div class="k-value">{{ preview.consumers_check.broken_count }}</div>
+            <div class="k-note">需同步改名 {{ preview.consumers_check.needs_update_count }} 处</div>
+          </div>
+        </div>
+        <p class="small" style="margin:0">
+          <a class="btn small" href="/workbench?sample=A">复跑样例 A</a>
+          <a class="btn secondary small" href="/workbench?sample=B">复跑样例 B</a>
+          <a class="btn secondary small" href="/workbench?sample=C">复跑样例 C</a>
+          <a class="btn secondary small" href="/review">复核页（历史 + SQL 下载 + 完整矩阵）</a>
+          <a class="btn secondary small" href="/api/runs">运行记录 JSON</a>
+        </p>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

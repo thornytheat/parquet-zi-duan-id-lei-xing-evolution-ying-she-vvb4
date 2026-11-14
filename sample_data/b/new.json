@@ -1,0 +1,13 @@
+{
+  "table": "dwd_payment",
+  "fields": [
+    {"id": 1, "name": "payment_id", "type": "string", "nullable": false, "default": null, "partition": false},
+    {"id": 2, "name": "order_id", "type": "int64", "nullable": false, "default": null, "partition": false},
+    {"id": 3, "name": "amount", "type": "decimal(18,2)", "nullable": false, "default": null, "partition": false},
+    {"id": 4, "name": "pay_channel", "type": "string", "nullable": true, "default": null, "partition": false},
+    {"id": 5, "name": "paid_at", "type": "timestamp", "nullable": true, "default": null, "partition": false},
+    {"id": 6, "name": "dt", "type": "date", "nullable": false, "default": null, "partition": true},
+    {"id": 7, "name": "fee", "type": "decimal(10,2)", "nullable": false, "default": "0.00", "partition": false},
+    {"id": 8, "name": "settle_status", "type": "string", "nullable": true, "default": null, "partition": false}
+  ]
+}

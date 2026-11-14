@@ -1,0 +1,11 @@
+{
+  "table": "dwd_orders",
+  "fields": [
+    {"id": 1, "name": "order_id", "type": "string", "nullable": false, "default": null, "partition": false},
+    {"id": 2, "name": "user_id", "type": "int64", "nullable": false, "default": null, "partition": false},
+    {"id": 3, "name": "amount", "type": "decimal(10,2)", "nullable": false, "default": null, "partition": false},
+    {"id": 4, "name": "status", "type": "string", "nullable": true, "default": null, "partition": false},
+    {"id": 5, "name": "created_at", "type": "timestamp", "nullable": true, "default": null, "partition": false},
+    {"id": 6, "name": "dt", "type": "date", "nullable": false, "default": null, "partition": true}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "table": "dwd_shipment",
+  "files": [
+    {"path": "s3://lake/dwd_shipment/dt=2026-11-01/part-0000.parquet", "columns": ["shipment_id", "order_id", "status", "weight_gram", "dt"]},
+    {"path": "s3://lake/dwd_shipment/dt=2026-11-01/part-0001.parquet", "columns": ["shipment_id", "status", "dt"]},
+    {"path": "s3://lake/dwd_shipment/dt=2026-11-02/part-0000.parquet", "columns": ["shipment_id", "weight_gram", "carrier"]},
+    {"path": "s3://lake/dwd_shipment/dt=2026-11-03/part-0000.parquet", "columns": ["shipment_id", "order_id", "dt"]}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "table": "dwd_orders",
+  "files": [
+    {"path": "s3://lake/dwd_orders/dt=2026-11-01/part-0000.parquet", "columns": ["order_id", "user_id", "amount", "dt"]},
+    {"path": "s3://lake/dwd_orders/dt=2026-11-02/part-0000.parquet", "columns": ["order_id", "amount", "status", "dt"]},
+    {"path": "s3://lake/dwd_orders/dt=2026-11-03/part-0000.parquet", "columns": ["order_id", "created_at", "dt"]}
+  ]
+}

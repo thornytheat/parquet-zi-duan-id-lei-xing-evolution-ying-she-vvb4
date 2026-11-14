@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}记录不存在 · {{ app_name }}{% endblock %}
+{% block crumb %}记录不存在{% endblock %}
+{% block meta %}<span class="dot err"></span>run_id 不存在或已超出保留上限{% endblock %}
+{% block actions %}<a class="btn secondary small" href="/review">查看历史记录</a>{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">找不到这次对比记录</h1>
+    <p class="page-sub">run_id：<code>{{ run_id }}</code></p>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>可能原因</h2>
+    <div class="panel-actions"><span class="tag">历史记录只保留最近 {{ max_runs }} 次</span></div>
+  </div>
+  <div class="panel-body tight">
+    <ul class="list small" style="margin:0">
+      <li>链接被手工改动（run_id 格式为 <code>run-YYYYMMDDTHHMMSS-xxxxxx</code>）。</li>
+      <li>运行记录已超出保留上限（{{ max_runs }} 条），更早的记录被裁剪。</li>
+      <li>服务重建后数据卷被清空（<code>docker compose down -v</code> 会删除 <code>schemaevo-data</code>）。</li>
+    </ul>
+  </div>
+  <div class="panel-actions">
+    <a class="btn small" href="/workbench">回到工作台重新执行对比</a>
+    <a class="btn secondary small" href="/review">查看历史记录</a>
+  </div>
+</section>
+{% endblock %}

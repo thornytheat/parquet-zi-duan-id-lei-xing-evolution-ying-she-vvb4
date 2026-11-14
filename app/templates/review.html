@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}复核与导出 · {{ app_name }}{% endblock %}
+{% block crumb %}复核与导出{% endblock %}
+{% block meta %}<span class="dot {% if runs %}ok{% else %}warn{% endif %}"></span>历史对比 {{ runs|length }} 条{% if latest %} · 最近 {{ latest.run_id }}{% endif %}{% endblock %}
+{% block actions %}
+{% if latest %}<a class="btn secondary small" href="/api/runs/{{ latest.run_id }}/migration.sql">下载最近迁移 SQL</a>{% endif %}
+<a class="btn small" href="/workbench">回工作台</a>
+{% endblock %}
+{% block status_left %}历史对比全部落在 data/runs/*.json（最多保留 {{ max_runs }} 条）· 迁移脚本按 run 单独下载 · 同一输入重跑产生新记录{% endblock %}
+{% block status_right %}{% if latest %}最近运行 <code>{{ latest.run_id }}</code> · {{ latest.table }}{% else %}{{ app_name }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">复核与导出</h1>
+    <p class="page-sub">每行一次真实对比；搜索与兼容级别筛选即时生效（纯前端），迁移脚本按 run 单独下载。同一输入重复执行会产生新记录，旧记录保留，便于对比不同版本。</p>
+  </div>
+  <div class="page-head-actions">
+    {% if latest %}<a class="btn small" href="/api/runs/{{ latest.run_id }}/migration.sql">下载迁移 SQL</a>{% endif %}
+    <a class="btn secondary small" href="/workbench">执行新对比</a>
+  </div>
+</div>
+
+<div class="split result">
+  <section class="panel">
+    <div class="toolbar">
+      <input type="search" id="review-search" placeholder="搜索 run_id / 表名 / 来源" aria-label="搜索历史对比">
+      <select id="review-level" aria-label="按兼容级别筛选">
+        <option value="">全部级别</option>
+        <option value="full">full</option>
+        <option value="backward">backward</option>
+        <option value="forward">forward</option>
+        <option value="none">none</option>
+      </select>
+      <span class="small muted" id="review-stat">本页 {{ runs|length }} 条</span>
+      <span class="spacer"></span>
+      {% if latest %}<a class="btn secondary small" href="/api/runs/{{ latest.run_id }}/migration.sql">下载迁移 SQL</a>{% endif %}
+      <a class="btn secondary small" href="/api/runs">运行记录 JSON</a>
+    </div>
+
+    {% if runs %}
+    <div class="table-wrap roomy">
+      <table class="dense" id="runs-table">
+        <thead>
+          <tr><th style="width:236px">运行 / 时间 / 来源</th><th style="width:104px">表</th>
+            <th style="width:88px">兼容级别</th><th style="width:86px">ALTER / 回填</th>
+            <th style="width:66px">破损引用</th><th style="width:58px">可执行</th><th style="width:80px">操作</th></tr>
+        </thead>
+        <tbody>
+        {% for r in runs %}
+          <tr data-level="{{ r.summary.level }}"
+              data-search="{{ r.run_id }} {{ r.table }} {{ r.source }} {{ r.summary.level }}">
+            <td>
+              <a class="mono nowrap" href="/result/{{ r.run_id }}">{{ r.run_id }}</a>
+              <div class="small muted">{{ r.created_at }} · {{ r.source }}</div>
+            </td>
+            <td class="small nowrap"><code>{{ r.table }}</code></td>
+            <td>
+              {% if r.summary.level == 'full' %}<span class="tag ok">full</span>
+              {% elif r.summary.level == 'backward' %}<span class="tag warn">backward</span>
+              {% elif r.summary.level == 'forward' %}<span class="tag warn">forward</span>
+              {% else %}<span class="tag err">none</span>{% endif %}
+            </td>
+            <td class="num nowrap">{{ r.summary.sql_steps }} / {{ r.summary.backfill_count }}</td>
+            <td class="num">{{ r.summary.broken_consumers }}</td>
+            <td>{{ '是' if r.summary.can_execute else '否' }}</td>
+            <td class="nowrap">
+              <a href="/result/{{ r.run_id }}">查看</a> · <a href="/api/runs/{{ r.run_id }}/migration.sql">SQL</a>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="panel-body tight">
+      <p class="small muted" style="margin:0">
+        历史对比全部落在 <code>data/runs/*.json</code>，点任意一条可回到结果页；迁移脚本按 run 单独下载。
+        同一输入重复执行会产生新记录，旧记录保留，便于对比不同版本。
+      </p>
+    </div>
+    <div class="panel-actions">
+      <span class="small muted" style="align-self:center">样例复跑：</span>
+      {% for s in sample_index %}
+      <a class="btn secondary small" href="/workbench?sample={{ s.key }}">样例 {{ s.key }}</a>
+      {% endfor %}
+      <a class="btn small" href="/workbench">执行新对比</a>
+    </div>
+    {% else %}
+    <div class="empty">
+      <strong>还没有对比记录</strong>
+      先到工作台跑一组样例（A 完全兼容 / B 需回填 / C 破坏性），这里会出现逐条可回看的历史与 SQL 下载入口。
+      <div style="margin-top:10px"><a class="btn small" href="/workbench?sample=A">用样例 A 跑一次</a></div>
+    </div>
+    {% endif %}
+  </section>
+
+  <div>
+    <section class="panel pane-sticky" id="matrix">
+      <div class="panel-head">
+        <h2>类型矩阵说明</h2>
+        <div class="panel-actions">
+          <span class="tag">显式表 · 表外 unknown</span>
+          <a class="btn secondary small" href="/api/matrix">JSON</a>
+        </div>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          判定口径：<code>promotion(旧类型, 新类型)</code> 回答「旧数据里的值能否被新类型无损读取」；
+          反方向（新写旧读）用同样的表反向查一次。矩阵版本 {{ matrix_version }}。
+        </p>
+      </div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>旧 → 新</th><th style="width:66px">结论</th><th>规则 / 原因</th></tr></thead>
+          <tbody>
+          {% for p in promotions %}
+            <tr>
+              <td class="nowrap">{{ p.from }} → {{ p.to }}</td>
+              <td>{% if p.verdict == 'compatible' %}<span class="tag ok">兼容</span>{% else %}<span class="tag err">阻断</span>{% endif %}</td>
+              <td class="small">{{ p.reason }} <span class="hint">（{{ p.rule }}）</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <h3 style="margin:0 0 4px">decimal 专项规则</h3>
+        <ul class="list small" style="margin:0">{% for rule in decimal_rules %}<li>{{ rule }}</li>{% endfor %}</ul>
+      </div>
+    </section>
+
+    {% if latest %}
+    <section class="panel">
+      <div class="panel-head">
+        <h2>最近运行详情</h2>
+        <div class="panel-actions"><a class="btn secondary small" href="/result/{{ latest.run_id }}">打开结果页</a></div>
+      </div>
+      <div class="panel-body tight">
+        <p class="small" style="margin:0 0 6px">
+          <code class="mono">{{ latest.run_id }}</code> · <code>{{ latest.table }}</code> · {{ latest.created_at }}
+        </p>
+        <div class="kpi-strip" style="margin-bottom:8px">
+          <div class="kpi {% if latest.summary.level == 'full' %}ok{% elif latest.summary.level == 'none' %}err{% else %}warn{% endif %}">
+            <div class="k-label">兼容级别</div>
+            <div class="k-value" style="font-size:15px">{{ latest.summary.level }}</div>
+            <div class="k-note">{{ latest.summary.level_label }}</div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">ALTER / 回填</div>
+            <div class="k-value">{{ latest.summary.sql_steps }}</div>
+            <div class="k-note">回填对象 {{ latest.summary.backfill_count }} 个</div>
+          </div>
+          <div class="kpi {% if latest.summary.blocking_count %}err{% else %}ok{% endif %}">
+            <div class="k-label">阻断</div>
+            <div class="k-value">{{ latest.summary.blocking_count }}</div>
+            <div class="k-note">破损引用 {{ latest.summary.broken_consumers }} · 需改名 {{ latest.summary.needs_update }}</div>
+          </div>
+        </div>
+        <ul class="list small" style="margin:0">
+          <li>字段匹配 {{ latest.match.rows|length }} 条 · 改名 {{ latest.summary.renamed }} · 新增 {{ latest.summary.added }} · 删除 {{ latest.summary.removed }}</li>
+          <li>类型变更 {{ latest.type_changes|length }} 条 · 本次用到矩阵条目 {{ latest.matrix_usage|length }} 条</li>
+          <li>能否执行迁移：{{ '是' if latest.summary.can_execute else '否（有阻断）' }} · 数据文件 {{ latest.consumers_check.files }} 个 / 引用 {{ latest.consumers_check.total_refs }} 处</li>
+        </ul>
+      </div>
+      <div class="panel-actions">
+        <a class="btn small" href="/api/runs/{{ latest.run_id }}/migration.sql">下载迁移 SQL</a>
+        <a class="btn secondary small" href="/result/{{ latest.run_id }}">逐条依据</a>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

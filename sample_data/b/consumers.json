@@ -1,0 +1,8 @@
+{
+  "table": "dwd_payment",
+  "files": [
+    {"path": "s3://lake/dwd_payment/dt=2026-11-01/part-0000.parquet", "columns": ["payment_id", "order_id", "amount", "channel", "dt"]},
+    {"path": "s3://lake/dwd_payment/dt=2026-11-01/part-0001.parquet", "columns": ["payment_id", "channel", "paid_at", "dt"]},
+    {"path": "s3://lake/dwd_payment/dt=2026-11-02/part-0000.parquet", "columns": ["payment_id", "order_id", "amount", "dt"]}
+  ]
+}
